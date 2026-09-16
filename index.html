@@ -338,16 +338,19 @@ const dynamicLights = []; // pooled point lights for laser/enemy glow
 
 function initScene() {
   scene = new THREE.Scene();
-  // dark ambient gradient background so it doesn't clash with passthrough
-  // (only visible on desktop / non-passthrough fallback; AR clears to transparent)
-  const bgCanvas = document.createElement('canvas');
-  bgCanvas.width = 8; bgCanvas.height = 128;
-  const ctx = bgCanvas.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, 128);
-  grad.addColorStop(0, '#0b1220');
-  grad.addColorStop(1, '#020204');
-  ctx.fillStyle = grad; ctx.fillRect(0, 0, 8, 128);
-  scene.background = new THREE.CanvasTexture(bgCanvas);
+  // Dark ambient gradient background — desktop-only. In an AR session, scene.background
+  // must stay null or it paints over the passthrough camera feed instead of letting it
+  // show through the transparent WebGL context.
+  if (!Input.isXR) {
+    const bgCanvas = document.createElement('canvas');
+    bgCanvas.width = 8; bgCanvas.height = 128;
+    const ctx = bgCanvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0, '#0b1220');
+    grad.addColorStop(1, '#020204');
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, 8, 128);
+    scene.background = new THREE.CanvasTexture(bgCanvas);
+  }
   scene.fog = new THREE.Fog(0x05060a, 6, 18);
 
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 60);
@@ -1174,7 +1177,26 @@ const Game = {
     LaserMode.init(scene);
     ShootMode.init(scene);
     Menu.onSelect = (btn) => this.onMenuSelect(btn);
-    this.showMainMenu();
+    if (Input.isXR) {
+      // Don't position the in-world panel yet: three.js hasn't synced the camera's
+      // real headset pose onto the `camera` object until the first render() call
+      // of this session, so placing it "in front of the camera" right now would
+      // use a stale pre-session transform. Prep the menu contents and flag it to
+      // be placed on the first real XR frame instead (see animate()).
+      this.state = 'MENU';
+      document.getElementById('hud').classList.remove('active');
+      document.getElementById('healthWrap').style.display = 'none';
+      document.getElementById('hudComboPill').style.display = 'none';
+      LaserMode.stop(); ShootMode.stop();
+      Menu.setItems('PASSTHROUGH ARENA', [
+        { label: 'Laser Dodge', sub: 'Mark start + end' },
+        { label: 'Shoot Enemies', sub: 'Mark 4 floor corners' },
+        { label: 'Recenter Arena', sub: 'Re-run setup' },
+      ]);
+      this._menuNeedsPlacement = true;
+    } else {
+      this.showMainMenu();
+    }
   },
 
   showMainMenu() {
@@ -1433,6 +1455,14 @@ function animate(timestamp, frame) {
 
   Input.clearFrameActions();
   renderer.render(scene, camera);
+
+  // First real XR frame: the camera now holds the actual headset pose synced
+  // during the render() call above, so it's safe to place the panel in front
+  // of where the player is really standing/looking.
+  if (Game._menuNeedsPlacement && frame) {
+    Game._menuNeedsPlacement = false;
+    Menu.show(1.1);
+  }
 }
 
 /* =============================== bootstrap ================================= */
